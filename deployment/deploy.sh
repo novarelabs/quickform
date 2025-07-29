@@ -151,7 +151,7 @@ elif [ "$CLEAR_VOLUMES" = "true" ]; then
 
   # Remove only volumes specific to this project
   # Docker Compose creates volumes with pattern: PROJECT_NAME_ENV_volumename
-  # Example: sgit_sandbox_code_base, sgit_sandbox_db_data, etc.
+  # Example: quickform_sandbox_code_base, quickform_sandbox_db_data, etc.
   ssh $VPS_USER@$VPS_HOST "docker volume ls -q | grep -E '${COMPOSE_PROJECT_NAME}_|${PROJECT_NAME}_' | xargs -r docker volume rm" || echo "No project-specific volumes found to remove"
 
   echo -e "${YELLOW}⚠️ Project volumes cleared. This will reset database and cache data for $PROJECT_NAME only.${NC}"
