@@ -1,11 +1,18 @@
-version: '3.8'
+
+# Environment variables that should be set:
+# PROJECT_NAME - Project name (default: )
+# NGINX_PORT_80 - HTTP port (default: 8090)
+# NGINX_PORT_443 - HTTPS port (default: 8091)
+# SSL_DOMAIN - SSL domain (default: sandbox.novarelabs.dev)
+# SSL_EMAIL - SSL email (default: sandbox@novarelabs.dev)
+# SSL_SUBDOMAINS - SSL subdomains (default: www,api)
 
 services:
     app:
         build:
-            context: .
-            dockerfile: Dockerfile
-        image: ${PROJECT_NAME:-app}
+            context: ../.
+            dockerfile: deployment/Dockerfile
+        image: ${PROJECT_NAME:-}
         restart: unless-stopped
         working_dir: /var/www/
         volumes:
@@ -18,17 +25,17 @@ services:
             redis:
                 condition: service_started
         env_file:
-            - .env
+            - ../.env
         environment:
-            - SSL_DOMAIN=${SSL_DOMAIN:-}
-            - SSL_EMAIL=${SSL_EMAIL:-}
+            - SSL_DOMAIN=${SSL_DOMAIN:-sandbox.novarelabs.dev}
+            - SSL_EMAIL=${SSL_EMAIL:-sandbox@novarelabs.dev}
             - SSL_SUBDOMAINS=${SSL_SUBDOMAINS:-www,api}
 
     db:
         image: postgres:13
         restart: unless-stopped
         env_file:
-            - .env
+            - ../.env
         volumes:
             - db_data:/var/lib/postgresql/data
         networks:
@@ -42,7 +49,7 @@ services:
 
     redis:
         image: redis:7-alpine
-        container_name: ${PROJECT_NAME:-app}_redis_prod
+        container_name: ${PROJECT_NAME:-}_redis_prod
         restart: unless-stopped
         volumes:
             - redis_data:/data
@@ -51,54 +58,38 @@ services:
 
     nginx:
         image: nginx:alpine
-        container_name: ${PROJECT_NAME:-app}_nginx_prod
+        container_name: ${PROJECT_NAME:-}_nginx_prod
         restart: unless-stopped
         # Use direct port binding by default, but can be overridden
         ports:
-            - "${NGINX_PORT_80:-80}:80"
-            - "${NGINX_PORT_443:-443}:443"
+            - "${NGINX_PORT_80:-8090}:80"
+            - "${NGINX_PORT_443:-8091}:443"
         volumes:
             - code_base:/var/www
             - ./nginx-ssl.conf:/etc/nginx/nginx.conf:ro
             - /etc/letsencrypt:/etc/letsencrypt:ro
-            - ./storage/logs:/var/log/nginx
+            - ../storage/logs:/var/log/nginx
         networks:
             - app_network
         depends_on:
             - app
         environment:
-            - SSL_DOMAIN=${SSL_DOMAIN:-}
-            - SSL_EMAIL=${SSL_EMAIL:-}
+            - SSL_DOMAIN=${SSL_DOMAIN:-sandbox.novarelabs.dev}
+            - SSL_EMAIL=${SSL_EMAIL:-sandbox@novarelabs.dev}
             - SSL_SUBDOMAINS=${SSL_SUBDOMAINS:-www,api}
+        healthcheck:
+            test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/health"]
+            interval: 10s
+            timeout: 5s
+            retries: 5
+            start_period: 30s
         command: >
             sh -c "
               nginx -g 'daemon off;'
             "
 
-    certbot:
-        image: certbot/certbot:latest
-        container_name: ${PROJECT_NAME:-app}_certbot
-        restart: "no"
-        volumes:
-            - code_base:/var/www
-            - /etc/letsencrypt:/etc/letsencrypt
-            - /var/lib/letsencrypt:/var/lib/letsencrypt
-        networks:
-            - app_network
-        environment:
-            - SSL_DOMAIN=${SSL_DOMAIN:-}
-            - SSL_EMAIL=${SSL_EMAIL:-}
-            - SSL_SUBDOMAINS=${SSL_SUBDOMAINS:-www,api}
-        command: >
-            sh -c "
-              /var/www/ssl-setup.sh certbot &&
-              echo 'SSL setup completed'
-            "
-        depends_on:
-            - nginx
-
     queue:
-        image: ${PROJECT_NAME:-app}
+        image: ${PROJECT_NAME:-}
         restart: unless-stopped
         working_dir: /var/www/
         volumes:
@@ -111,25 +102,9 @@ services:
             redis:
                 condition: service_started
         env_file:
-            - .env
+            - ../.env
         command: php artisan queue:work --sleep=3 --tries=3 --max-time=3600
 
-    scheduler:
-        image: ${PROJECT_NAME:-app}
-        restart: unless-stopped
-        working_dir: /var/www/
-        volumes:
-            - code_base:/var/www
-        networks:
-            - app_network
-        depends_on:
-            db:
-                condition: service_healthy
-            redis:
-                condition: service_started
-        env_file:
-            - .env
-        command: php artisan schedule:work
 
 volumes:
     code_base:
@@ -138,4 +113,4 @@ volumes:
 
 networks:
     app_network:
-        driver: bridge 
+        driver: bridge
