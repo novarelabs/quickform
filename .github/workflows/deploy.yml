@@ -34,6 +34,11 @@ on:
         required: false
         default: false
         type: boolean
+      setup_reverse_proxy:
+        description: 'Setup nginx reverse proxy for domain-based routing'
+        required: false
+        default: true
+        type: boolean
 
 jobs:
   deploy:
@@ -51,10 +56,9 @@ jobs:
       NGINX_PORT_80: ${{ vars.PROJECT_PORT || '8080' }}
       NGINX_PORT_443: ${{ vars.PROJECT_PORT_443 || '8091' }}
 
-      # SSL Configuration (set these in GitHub repository variables)
-      SSL_DOMAIN: ${{ vars.SSL_DOMAIN || 'sandbox.novarelabs.dev' }}
-      SSL_EMAIL: ${{ vars.SSL_EMAIL || 'sandbox@novarelabs.dev' }}
-      SSL_SUBDOMAINS: ${{ vars.SSL_SUBDOMAINS || 'www,api' }}
+      # Domain Configuration (set these in GitHub repository variables)
+      DOMAIN: ${{ vars.DOMAIN || 'quickform.sandbox.novarelabs.dev' }}
+      API_DOMAIN: ${{ vars.API_DOMAIN || 'api.quickform.sandbox.novarelabs.dev' }}
 
       # Deployment Options (GitHub Variables or workflow inputs)
       FORCE_REBUILD: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.force_rebuild || vars.FORCE_REBUILD || 'false' }}
@@ -62,6 +66,7 @@ jobs:
       SEED_DATA: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.seed_data || vars.SEED_DATA || 'false' }}
       FORCE_CLEANUP: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.force_cleanup || vars.FORCE_CLEANUP || 'false' }}
       CLEAR_NODE_MODULES: ${{ vars.CLEAR_NODE_MODULES || 'false' }}
+      SETUP_REVERSE_PROXY: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.setup_reverse_proxy || vars.SETUP_REVERSE_PROXY || 'true' }}
 
       # Environment Configuration (set APP_ENV in GitHub environment variables)
       APP_ENV: ${{ vars.APP_ENV }}
@@ -102,11 +107,35 @@ jobs:
           chmod +x deployment/deploy.sh
           ./deployment/deploy.sh
 
+      - name: Setup Reverse Proxy
+        if: ${{ env.SETUP_REVERSE_PROXY == 'true' }}
+        run: |
+          # Copy setup script to VPS
+          scp deployment/setup-reverse-proxy.sh ${{ vars.VPS_USER }}@${{ vars.VPS_HOST }}:/tmp/
+
+          # Run the setup script on VPS
+          ssh ${{ vars.VPS_USER }}@${{ vars.VPS_HOST }} << 'EOF'
+            chmod +x /tmp/setup-reverse-proxy.sh
+            cd /tmp
+
+            # Get domain from environment variables or use defaults
+            DOMAIN="${{ vars.DOMAIN || 'quickform.sandbox.novarelabs.dev' }}"
+            API_DOMAIN="${{ vars.API_DOMAIN || 'api.quickform.sandbox.novarelabs.dev' }}"
+            PROJECT_PORT="${{ vars.PROJECT_PORT || '8080' }}"
+
+            # Run setup script with our specific domain
+            ./setup-reverse-proxy.sh "$DOMAIN" "$API_DOMAIN" "$PROJECT_PORT"
+          EOF
+
       - name: Deployment Summary
         run: |
           # Calculate HTTPS port from PROJECT_PORT
           PROJECT_PORT_NUM=${{ vars.PROJECT_PORT || 8080 }}
           NGINX_PORT_443_NUM=$((PROJECT_PORT_NUM + 1))
+
+          # Get domain information
+          DOMAIN="${{ vars.DOMAIN || 'quickform.sandbox.novarelabs.dev' }}"
+          API_DOMAIN="${{ vars.API_DOMAIN || 'api.quickform.sandbox.novarelabs.dev' }}"
 
           echo "🚀 Deployment completed!"
           echo "Environment: $DEPLOY_ENV"
@@ -114,16 +143,29 @@ jobs:
           echo "Project Port: $PROJECT_PORT"
           echo "Nginx HTTP Port: $NGINX_PORT_80"
           echo "Nginx HTTPS Port: $NGINX_PORT_443_NUM"
-          echo "SSL Domain: $SSL_DOMAIN"
-          echo "SSL Email: $SSL_EMAIL"
+          echo "Main Domain: $DOMAIN"
+          echo "API Domain: $API_DOMAIN"
           echo "Force Rebuild: $FORCE_REBUILD"
           echo "Clear Volumes: $CLEAR_VOLUMES"
           echo "Seed Data: $SEED_DATA"
           echo "Force Cleanup: $FORCE_CLEANUP"
           echo ""
+          echo "Reverse Proxy Setup:"
+          echo "  Main Domain: $DOMAIN"
+          echo "  API Domain: $API_DOMAIN"
+          echo "  Internal Port: $PROJECT_PORT"
+          echo ""
           echo "Access URLs:"
           echo "  HTTP: http://$VPS_HOST:$NGINX_PORT_80"
           echo "  HTTPS: https://$VPS_HOST:$NGINX_PORT_443_NUM"
-          if [ -n "$SSL_DOMAIN" ]; then
-            echo "  Domain: https://$SSL_DOMAIN"
+          if [ -n "$DOMAIN" ]; then
+            echo "  Main Domain: https://$DOMAIN"
+            echo "  API Domain: https://$API_DOMAIN"
           fi
+          echo ""
+          echo "Next Steps:"
+          echo "  1. Set up SSL certificates:"
+          echo "     sudo certbot --nginx -d $DOMAIN"
+          echo "     sudo certbot --nginx -d $API_DOMAIN"
+          echo "  2. Update DNS records to point to your VPS"
+          echo "  3. Access your application at https://$DOMAIN"
